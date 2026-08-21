@@ -6,7 +6,9 @@ Remote: `origin` = `https://github.com/ChatArch/deepseek-harness.git`
 
 ## Objective
 
-Implement a multi-user authentication and data-isolation system in DeepSeek Harness, using our live Glance/Open WebUI deployment as the reference system and codebase to study.
+Implement product-level multi-user authentication and data ownership in DeepSeek Harness, using our live Glance/Open WebUI deployment as the reference system and codebase to study.
+
+The first production target is conversation/session history and workspace/project history isolation inside one DSH Web host process. OS-user, container, namespace, or per-user runtime isolation is explicitly not required for the first upstreamable phase.
 
 ## Reference System
 
@@ -19,6 +21,17 @@ Implement a multi-user authentication and data-isolation system in DeepSeek Harn
 ## Development Rule
 
 Develop only on the ChatArch fork branch `dev`. Do not push this work to upstream directly. Use upstream only as the sync base.
+
+## Accepted Deployment Model
+
+The current acceptable deployment shape is one DSH Web host process per deployment, fronted by Open WebUI or another authenticated gateway. This means:
+
+- the DSH process may still run as a single OS user;
+- filesystem/runtime access is not treated as a hard tenant boundary in the first phase;
+- DSH must still know the authenticated Web user through `ApiRequestContext.auth`;
+- session, workspace and project-history APIs must enforce application-level ownership;
+- admin users need a clear bypass/repair path;
+- auth-disabled mode keeps the existing single-user behavior.
 
 ## Phase 0: Dev Branch And Auth Context Seam
 
@@ -43,16 +56,15 @@ Deliverables:
 - Hardened the acceptance auth gate so it strips caller-provided auth headers and injects verified Open WebUI admin identity.
 - Deployed `origin/dev` commit `d13356a5cc` to `hitk.cube` and verified `rexwzh@lookeng.cn` reaches DSH as `role=admin`, `source=open-webui`.
 
-## Phase 1B: Local Auth Service
+## Phase 1B: Auth Mode And User Projection
 
 Deliverables:
 
 - Add `auth.mode` config shape: `disabled | local | trusted-header`.
-- Add user/auth storage abstraction.
-- Add first-admin bootstrap.
-- Add password hash verification.
-- Add login/logout/me APIs.
-- Add cookie/token session resolver.
+- Keep trusted-header mode as the deployment-first path because Open WebUI already owns login for our acceptance environment.
+- Add user/auth storage abstraction only where needed for local mode and future admin UI.
+- Add first-admin bootstrap, password hash verification, login/logout/me APIs, and cookie/token session resolver for local mode.
+- Expose a stable current-user projection for UI and policy checks.
 
 Borrow from Open WebUI:
 
@@ -67,20 +79,25 @@ Do not copy Open WebUI code verbatim without license review.
 
 Deliverables:
 
-- Persist owner on DSH sessions or a durable side index.
-- Filter and enforce ownership for session APIs.
-- Ensure `session.search` and `session.export` cannot cross user boundaries.
+- Persist owner on DSH sessions or a durable side index keyed by `SessionId`.
+- New `session.create` writes owner from `request.context.auth.userId`; auth-disabled mode writes no owner and preserves current behavior.
+- Filter and enforce ownership for `session.list`, `session.search`, `session.history`, `session.export`, `session.rename`, `session.fork`, `session.prompt`, `session.updateQueue`, and `session.cancel`.
 - Make subagents/forks inherit parent owner.
 - Filter `/api/events.mux` per current user.
+- Admin users may list/manage all sessions through an explicit admin policy path.
+- Legacy unowned sessions are admin-visible by default, with a future migration/claim path.
 
-## Phase 3: Workspace Ownership
+## Phase 3: Workspace And Project-History Ownership
 
 Deliverables:
 
-- Persist owner on workspaces or side index.
-- Filter and enforce workspace APIs.
-- Filter host workspace events.
-- Define admin repair/migration behavior.
+- Persist owner on workspaces or a durable side index keyed by `WorkspaceId`.
+- Filter and enforce workspace APIs: list/create/rename/delete/reorder/archive/insert-session.
+- Add per-user default workspace roots under a deployment-configured base, e.g. `<base>/<safe-user-id>/default`.
+- New sessions created without an explicit workspace use the current user's default workspace root.
+- Prevent workspace-to-session membership from crossing owners.
+- Filter host workspace events by current user.
+- Define admin repair/migration behavior for legacy unowned workspaces.
 
 ## Phase 4: Privileged Method Policy
 
@@ -101,11 +118,14 @@ Deliverables:
 
 ## Phase 6: Open WebUI Bridge Mode
 
+Status: first bridge complete; keep this phase for follow-up hardening.
+
 Deliverables:
 
-- Trusted-header or token bridge for deployments where Open WebUI is the front door.
-- Map Open WebUI user id/email/role into DSH `ApiAuthIdentity`.
-- Fail closed when bridge headers are missing or untrusted.
+- Keep trusted-header bridge as the Open WebUI front-door deployment mode.
+- Add issue/PR discussion based on `drafts/upstream-session-workspace-ownership-issue.md`; tracking issue is `https://github.com/ChatArch/deepseek-harness/issues/1` while official upstream Issues are disabled.
+- Add fail-closed behavior for authenticated deployments once DSH-native policy is enabled.
+- Add UI current-user display/logout affordances for gateway-backed deployments.
 
 ## Acceptance Criteria
 
