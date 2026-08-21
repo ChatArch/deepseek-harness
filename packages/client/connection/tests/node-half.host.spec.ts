@@ -8,9 +8,13 @@ import type { AddressInfo } from 'node:net'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
-import { RpcId, type ClientRequest } from '@deepseek-ai/dsh-host-apiproxy/api'
+import { RpcId, type ClientRequest, type RpcRequest } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { WebServer, WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
-import { API_PATH, apply, HOST_EVENTS_PATH, inject, MUX_EVENTS_PATH, type HostConnectionHandle } from '../src/index.ts'
+import {
+  API_PATH, apply, HOST_EVENTS_PATH, inject, MUX_EVENTS_PATH,
+  type ConnectionConfig,
+  type HostConnectionHandle,
+} from '../src/index.ts'
 
 /** Structural webServer fake recording both route registries. */
 function fakeHttpServer(
@@ -74,7 +78,7 @@ function fakeResponse(): { response: ServerResponse; state: { status?: number; b
   return { response, state }
 }
 
-async function mounted(config?: { trustedHosts?: string[] }): Promise<{
+async function mounted(config?: ConnectionConfig, apiProxy: ApiProxy = {} as unknown as ApiProxy): Promise<{
   routes: WebRoute[]
   upgrades: WebUpgradeRoute[]
   dispose: () => Promise<void>
@@ -83,7 +87,7 @@ async function mounted(config?: { trustedHosts?: string[] }): Promise<{
   const routes: WebRoute[] = []
   const upgrades: WebUpgradeRoute[] = []
   ctx.provide('webServer', fakeHttpServer(routes, upgrades) as WebServer)
-  ctx.provide('apiProxy', {} as unknown as ApiProxy)
+  ctx.provide('apiProxy', apiProxy)
   const fiber = ctx.plugin({ inject: [...inject], apply }, config)
   await fiber.await()
   return { routes, upgrades, dispose: () => fiber.dispose() }
@@ -210,6 +214,75 @@ describe('connection node half', () => {
       host: 'harness.example:3080', origin: 'http://harness.example:3080', 'sec-fetch-site': 'same-origin',
     }), declared.response)
     expect(declared.state.status).toBe(404)
+    await dispose()
+  })
+
+  it('projects trusted reverse-proxy identity headers into ApiRequestContext', async () => {
+    const contexts: unknown[] = []
+    const apiProxy = {
+      sessions: {
+        async list(request: RpcRequest<unknown>) {
+          contexts.push(request.context)
+          return { rpcId: request.rpcId, result: { ok: true, value: { sessions: [], cursor: undefined } } }
+        },
+      },
+    } as unknown as ApiProxy
+    const { routes, dispose } = await mounted({
+      trustedHeaderAuth: { enabled: true },
+    }, apiProxy)
+    const request: ClientRequest = {
+      type: 'client-request',
+      rpcId: RpcId('trusted-header-auth'),
+      method: 'session.list',
+      payload: {},
+    }
+    const response = fakeResponse()
+    await routes[0]!.handler(fakePost({
+      host: '127.0.0.1:3080',
+      'x-dsh-auth-user': 'rexwzh@lookeng.cn',
+      'x-dsh-auth-email': 'rexwzh@lookeng.cn',
+      'x-dsh-auth-name': 'RexWzh',
+      'x-dsh-auth-role': 'admin',
+      'x-dsh-auth-source': 'open-webui',
+    }, '/api/session.list', request), response.response)
+    expect(response.state.status).toBe(200)
+    expect(contexts).toEqual([{
+      auth: {
+        userId: 'rexwzh@lookeng.cn',
+        email: 'rexwzh@lookeng.cn',
+        name: 'RexWzh',
+        role: 'admin',
+        source: 'open-webui',
+      },
+    }])
+    await dispose()
+  })
+
+  it('does not project caller-supplied auth headers unless trustedHeaderAuth is enabled', async () => {
+    const contexts: unknown[] = []
+    const apiProxy = {
+      sessions: {
+        async list(request: RpcRequest<unknown>) {
+          contexts.push(request.context)
+          return { rpcId: request.rpcId, result: { ok: true, value: { sessions: [], cursor: undefined } } }
+        },
+      },
+    } as unknown as ApiProxy
+    const { routes, dispose } = await mounted(undefined, apiProxy)
+    const request: ClientRequest = {
+      type: 'client-request',
+      rpcId: RpcId('trusted-header-disabled'),
+      method: 'session.list',
+      payload: {},
+    }
+    const response = fakeResponse()
+    await routes[0]!.handler(fakePost({
+      host: '127.0.0.1:3080',
+      'x-dsh-auth-user': 'spoofed',
+      'x-dsh-auth-role': 'admin',
+    }, '/api/session.list', request), response.response)
+    expect(response.state.status).toBe(200)
+    expect(contexts).toEqual([undefined])
     await dispose()
   })
 

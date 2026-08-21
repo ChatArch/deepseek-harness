@@ -10,6 +10,11 @@ import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
 import { HostConnectionService } from './rpc-host.ts'
 import { rejectWebSocketUpgrade, WebSocketDownlinks } from './websocket-downlink.ts'
+import {
+  DEFAULT_TRUSTED_HEADER_AUTH,
+  createTrustedHeaderAuthResolver,
+  type TrustedHeaderAuthConfig,
+} from './trusted-header-auth.ts'
 
 export type {
   ConnectionRpcAuthority,
@@ -20,6 +25,8 @@ export type {
   HostConnectionRpc,
 } from './rpc.ts'
 export { HostConnectionService } from './rpc-host.ts'
+export { createTrustedHeaderAuthResolver, DEFAULT_TRUSTED_HEADER_AUTH } from './trusted-header-auth.ts'
+export type { TrustedHeaderAuthConfig, RequestContextResolver } from './trusted-header-auth.ts'
 
 export { API_PATH, HOST_EVENTS_PATH, MUX_EVENTS_PATH } from './api-path.ts'
 
@@ -59,11 +66,27 @@ export interface ConnectionConfig {
   trustedHosts?: string[]
   /** Maximum buffered JSON body for every `/api` request. */
   maxRequestBodyBytes?: number
+  /**
+   * Trusted reverse-proxy auth projection. Enable only when the proxy strips
+   * caller-supplied auth headers and writes its own verified identity headers.
+   */
+  trustedHeaderAuth?: TrustedHeaderAuthConfig
 }
+
+const TrustedHeaderAuth: z<TrustedHeaderAuthConfig> = z.object({
+  enabled: z.boolean().default(DEFAULT_TRUSTED_HEADER_AUTH.enabled),
+  userIdHeader: z.string().default(DEFAULT_TRUSTED_HEADER_AUTH.userIdHeader),
+  roleHeader: z.string().default(DEFAULT_TRUSTED_HEADER_AUTH.roleHeader),
+  emailHeader: z.string().default(DEFAULT_TRUSTED_HEADER_AUTH.emailHeader),
+  nameHeader: z.string().default(DEFAULT_TRUSTED_HEADER_AUTH.nameHeader),
+  sourceHeader: z.string().default(DEFAULT_TRUSTED_HEADER_AUTH.sourceHeader),
+  source: z.string().default(DEFAULT_TRUSTED_HEADER_AUTH.source),
+})
 
 export const Config: z<ConnectionConfig> = z.object({
   trustedHosts: z.array(String).default([]),
   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
+  trustedHeaderAuth: TrustedHeaderAuth.default(DEFAULT_TRUSTED_HEADER_AUTH),
 })
 
 /**
@@ -131,6 +154,7 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
   // The Loader resolves schema defaults; hand-built test contexts may pass none.
   const trustedHosts = config?.trustedHosts ?? []
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
+  const resolveContext = createTrustedHeaderAuthResolver(config?.trustedHeaderAuth)
   // Config boundary: a malformed entry fails the load loudly here rather than
   // silently authorizing its hostname prefix at request time.
   for (const entry of trustedHosts) assertTrustedAuthority(entry)
@@ -155,7 +179,7 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
       }
       const apiProxy = ctx.get('apiProxy')
       if (apiProxy === undefined) return new Response('not found', { status: 404 })
-      return toFetchHandler(apiProxy).fetch(request)
+      return toFetchHandler(apiProxy, resolveContext === undefined ? {} : { resolveContext }).fetch(request)
     },
   })
   const route: WebRoute = {
