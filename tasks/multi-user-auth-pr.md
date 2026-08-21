@@ -20,17 +20,30 @@ Implement a multi-user authentication and data-isolation system in DeepSeek Harn
 
 Develop only on the ChatArch fork branch `dev`. Do not push this work to upstream directly. Use upstream only as the sync base.
 
-## Phase 0: Dev Branch And Seam
+## Phase 0: Dev Branch And Auth Context Seam
 
-Status: in progress.
+Status: complete.
 
 Deliverables:
 
-- Create/push `origin/dev` from current master.
-- Add request context seam to API carrier.
-- Test that carrier-resolved context reaches unary calls, SSE streams, session export and response routes.
+- Created and pushed `origin/dev` from current master.
+- Added request context seam to API carrier.
+- Tested that carrier-resolved context reaches unary calls, SSE streams, session export and response routes.
 
-## Phase 1: Local Auth Service
+## Phase 1A: Open WebUI Trusted-Header Bridge
+
+Status: complete and deployed to the acceptance environment.
+
+Deliverables:
+
+- Added `ConnectionConfig.trustedHeaderAuth` to the Web connection layer.
+- Added `createTrustedHeaderAuthResolver()` for trusted reverse-proxy headers.
+- Mapped verified `x-dsh-auth-*` headers into DSH `ApiRequestContext.auth`.
+- Kept the bridge disabled by default; `DSH_AUTH_TRUSTED_HEADER=1` enables it in the Web bundle.
+- Hardened the acceptance auth gate so it strips caller-provided auth headers and injects verified Open WebUI admin identity.
+- Deployed `origin/dev` commit `d13356a5cc` to `hitk.cube` and verified `rexwzh@lookeng.cn` reaches DSH as `role=admin`, `source=open-webui`.
+
+## Phase 1B: Local Auth Service
 
 Deliverables:
 
