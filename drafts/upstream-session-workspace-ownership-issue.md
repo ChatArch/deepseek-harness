@@ -2,7 +2,9 @@
 
 Tracking issue: https://github.com/ChatArch/deepseek-harness/issues/1
 
-Official upstream note: `deepseek-ai/deepseek-harness` currently has GitHub Issues disabled, so this was opened on the ChatArch fork and kept upstream-safe for later reposting as an issue/discussion.
+Official upstream Discussion comment: https://github.com/deepseek-ai/deepseek-harness/discussions/3389#discussioncomment-18109728
+
+Official upstream note: `deepseek-ai/deepseek-harness` currently has GitHub Issues disabled, so this was opened on the ChatArch fork and the proposal was also added to the existing official Discussion #3389.
 
 ## Title
 

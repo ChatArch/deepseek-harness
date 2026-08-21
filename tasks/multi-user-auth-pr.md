@@ -123,7 +123,7 @@ Status: first bridge complete; keep this phase for follow-up hardening.
 Deliverables:
 
 - Keep trusted-header bridge as the Open WebUI front-door deployment mode.
-- Add issue/PR discussion based on `drafts/upstream-session-workspace-ownership-issue.md`; tracking issue is `https://github.com/ChatArch/deepseek-harness/issues/1` while official upstream Issues are disabled.
+- Add issue/PR discussion based on `drafts/upstream-session-workspace-ownership-issue.md`; tracking issue is `https://github.com/ChatArch/deepseek-harness/issues/1` while official upstream Issues are disabled; official feedback comment is `https://github.com/deepseek-ai/deepseek-harness/discussions/3389#discussioncomment-18109728`.
 - Add fail-closed behavior for authenticated deployments once DSH-native policy is enabled.
 - Add UI current-user display/logout affordances for gateway-backed deployments.
 
