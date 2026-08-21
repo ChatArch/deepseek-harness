@@ -4,11 +4,17 @@ Date: 2026-08-21
 Branch: `dev`
 Remote: `origin` = `https://github.com/ChatArch/deepseek-harness.git`
 
+## Status
+
+Paused/deferred as of 2026-08-21. Keep the deployment auth gate and trusted-header bridge as saved groundwork, but do not proactively implement DSH-native multi-user ownership until official direction is clearer.
+
+Reason: DSH is not a pure chat app; it has filesystem, shell and workspace/environment capabilities. Without a strict runtime sandbox or per-user execution boundary, application-level session/workspace ownership would only isolate the UI/history layer and would not provide a true multi-user security boundary.
+
 ## Objective
 
-Implement product-level multi-user authentication and data ownership in DeepSeek Harness, using our live Glance/Open WebUI deployment as the reference system and codebase to study.
+Archived objective: product-level multi-user authentication and data ownership in DeepSeek Harness, using our live Glance/Open WebUI deployment as the reference system and codebase to study.
 
-The first production target is conversation/session history and workspace/project history isolation inside one DSH Web host process. OS-user, container, namespace, or per-user runtime isolation is explicitly not required for the first upstreamable phase.
+The previously scoped target was conversation/session history and workspace/project history isolation inside one DSH Web host process. This remains documented for future reference, but is not an active implementation plan.
 
 ## Reference System
 
@@ -24,7 +30,14 @@ Develop only on the ChatArch fork branch `dev`. Do not push this work to upstrea
 
 ## Accepted Deployment Model
 
-The current acceptable deployment shape is one DSH Web host process per deployment, fronted by Open WebUI or another authenticated gateway. This means:
+The current accepted production stance is conservative:
+
+- Keep DSH behind the deployment-level Open WebUI admin auth gate.
+- Keep trusted-header context plumbing as saved groundwork.
+- Do not advertise or rely on DSH-native multi-user isolation yet.
+- Wait for official direction on runtime sandboxing, permission cross-sections and multi-user ownership before continuing local implementation.
+
+The earlier application-level model remains a reference only:
 
 - the DSH process may still run as a single OS user;
 - filesystem/runtime access is not treated as a hard tenant boundary in the first phase;
@@ -58,7 +71,9 @@ Deliverables:
 
 ## Phase 1B: Auth Mode And User Projection
 
-Deliverables:
+Status: deferred pending official direction.
+
+Deliverables kept for reference:
 
 - Add `auth.mode` config shape: `disabled | local | trusted-header`.
 - Keep trusted-header mode as the deployment-first path because Open WebUI already owns login for our acceptance environment.
@@ -77,7 +92,9 @@ Do not copy Open WebUI code verbatim without license review.
 
 ## Phase 2: Session Ownership
 
-Deliverables:
+Status: deferred pending official direction and a stronger runtime/security boundary.
+
+Deliverables kept for reference:
 
 - Persist owner on DSH sessions or a durable side index keyed by `SessionId`.
 - New `session.create` writes owner from `request.context.auth.userId`; auth-disabled mode writes no owner and preserves current behavior.
@@ -89,7 +106,9 @@ Deliverables:
 
 ## Phase 3: Workspace And Project-History Ownership
 
-Deliverables:
+Status: deferred pending official direction and a stronger runtime/security boundary.
+
+Deliverables kept for reference:
 
 - Persist owner on workspaces or a durable side index keyed by `WorkspaceId`.
 - Filter and enforce workspace APIs: list/create/rename/delete/reorder/archive/insert-session.
