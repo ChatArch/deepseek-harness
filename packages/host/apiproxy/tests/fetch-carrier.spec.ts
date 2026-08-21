@@ -324,6 +324,67 @@ describe('unary round trip (handler ⇄ client, no network)', () => {
     }
   })
 
+  it('passes carrier-resolved request context to API implementations', async () => {
+    const api = fakeApi()
+    const context = { auth: { userId: 'owui-user-1', role: 'admin' as const, source: 'open-webui' } }
+    let unaryContext: unknown
+    let muxContext: unknown
+    let downloadContext: unknown
+    let respondContext: unknown
+
+    api.sessions.list = async (request) => {
+      unaryContext = request.context
+      return { rpcId: request.rpcId, result: { ok: true, value: { items: [] } } }
+    }
+    api.events.mux = (request, signal) => {
+      muxContext = request.context
+      return (async function * (): AsyncGenerator<RpcRequest<MuxFrame>> {
+        if (!signal.aborted) yield { rpcId: RpcId('frame-context'), payload: { type: 'session/subscribed', sessionId: 's1' as never, lastSeq: -1 } }
+      })()
+    }
+    api.downloads.sessionLog = async (request) => {
+      downloadContext = request.context
+      return new Response('zip', { status: 200 })
+    }
+    api.respond = async (_message, requestContext) => {
+      respondContext = requestContext
+      return { accepted: true }
+    }
+
+    const handler = toFetchHandler(api, {
+      resolveContext: request => request.headers.get('x-auth-user') === 'owui-user-1' ? context : undefined,
+    })
+    const headers = { 'content-type': 'application/json', 'x-auth-user': 'owui-user-1' }
+    const unary = await handler.fetch(new Request('http://dsh.local/api/session.list', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ type: 'client-request', rpcId: 'ctx-list', method: 'session.list', payload: {} }),
+    }))
+    expect(unary.status).toBe(200)
+    expect(unaryContext).toEqual(context)
+
+    await collect(new InProcessApiClient(handler).events.mux({}, AbortSignal.timeout(1)))
+      .catch(() => undefined)
+    expect(muxContext).toBeUndefined()
+
+    const mux = await handler.fetch(new Request('http://dsh.local/api/events.mux', { headers: { 'x-auth-user': 'owui-user-1' } }))
+    expect(mux.status).toBe(200)
+    await mux.body?.cancel()
+    expect(muxContext).toEqual(context)
+
+    const download = await handler.fetch(new Request('http://dsh.local/api/session.export?sessionId=s1', { headers: { 'x-auth-user': 'owui-user-1' } }))
+    expect(download.status).toBe(200)
+    expect(downloadContext).toEqual(context)
+
+    const receipt = await handler.fetch(new Request('http://dsh.local/api/respond', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ type: 'client-response', rpcId: 'known', result: { ok: true, value: {} } }),
+    }))
+    expect(receipt.status).toBe(200)
+    expect(respondContext).toEqual(context)
+  })
+
   it('carries a business error as 200 + error result', async () => {
     const response = await client().sessions.history({ sessionId: 'missing' as never })
     expect(response.result.ok).toBe(false)

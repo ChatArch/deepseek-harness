@@ -10,6 +10,7 @@ type ZodIssue = zCore.core.$ZodIssue
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { ApiRequestContext } from './request-context.ts'
 
 /**
  * Message correlation id: the initiator mints it on a request; a response
@@ -131,6 +132,8 @@ export function transportError<T>(error: unknown): RpcResult<T> {
 export interface RpcRequest<P> {
   rpcId: RpcId
   payload: P
+  /** Request-local metadata resolved by the carrier; never serialized in the RPC envelope. */
+  context?: ApiRequestContext
 }
 
 /** Signature-layer narrow form, response side: rpcId always echoes the matching request. */

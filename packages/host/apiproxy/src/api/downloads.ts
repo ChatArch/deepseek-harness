@@ -6,6 +6,15 @@
  */
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { ApiRequestContext } from './request-context.ts'
+
+/** Host-only download request, resolved from query params plus carrier-local context. */
+export interface SessionLogDownloadRequest {
+  readonly sessionId: SessionId
+  readonly includeDescendants?: boolean
+  /** Request-local metadata resolved by the carrier; never serialized in the URL query. */
+  readonly context?: ApiRequestContext
+}
 
 /** Host-only download surfaces (no wire envelope; absent from IApiClient). */
 export interface DownloadsApi {
@@ -19,7 +28,7 @@ export interface DownloadsApi {
    * missing root session 404 before any byte is produced.
    */
   sessionLog(
-    request: { sessionId: SessionId; includeDescendants?: boolean },
+    request: SessionLogDownloadRequest,
     signal: AbortSignal,
   ): Promise<Response>
 }

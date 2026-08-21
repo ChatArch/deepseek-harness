@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto'
 import type { z } from 'zod'
-import type { ApiProxy, MuxFrame, HostFrame } from '../api/index.ts'
+import type { ApiProxy, ApiRequestContext, MuxFrame, HostFrame } from '../api/index.ts'
 import { sessionLogQuerySchema } from '../api/downloads.schema.ts'
 import type { RequestPayload, ResponseValue, RpcMethodMap } from '../api/rpc-map.ts'
 import type { ClientRequest, RpcError, RpcRequest, RpcResponse, ServerRequest, ServerResponse } from '../api/rpc.ts'
@@ -85,6 +85,19 @@ type UnaryRoutes = {
     schema: z.ZodType<Wire<RequestPayload<K>>>
     invoke(api: ApiProxy, request: RpcRequest<RequestPayload<K>>, signal: AbortSignal): Promise<RpcResponse<ResponseValue<K>>>
   }
+}
+
+/** Carrier hook that resolves request-local context before business dispatch. */
+export interface ApiFetchHandlerOptions {
+  /**
+   * Resolve metadata that should reach API implementations but must not ride the
+   * public RPC envelope, such as an authenticated Open WebUI/DSH user.
+   */
+  resolveContext?: (request: Request) => ApiRequestContext | Promise<ApiRequestContext | undefined> | undefined
+}
+
+function attachContext<P>(request: RpcRequest<P>, context: ApiRequestContext | undefined): RpcRequest<P> {
+  return context === undefined ? request : { ...request, context }
 }
 
 const UNARY_ROUTES: UnaryRoutes = {
@@ -176,7 +189,11 @@ function fullResponse(narrow: RpcResponse<unknown>): Response {
 // schema/invoke pairing; a union parameter degrades the row to an uninvokable intersection.
 // oxlint-disable-next-line typescript/no-unnecessary-type-parameters
 async function handleUnary<K extends keyof RpcMethodMap>(
-  api: ApiProxy, method: K, message: ClientRequest, signal: AbortSignal,
+  api: ApiProxy,
+  method: K,
+  message: ClientRequest,
+  signal: AbortSignal,
+  context?: ApiRequestContext,
 ): Promise<Response> {
   const route = UNARY_ROUTES[method]
   const payload = route.schema.safeParse(message.payload)
@@ -184,7 +201,7 @@ async function handleUnary<K extends keyof RpcMethodMap>(
     return errorResponse(message.rpcId, { code: 'bad-request', message: `invalid payload for ${method}`, details: { issues: payload.error.issues } })
   }
   try {
-    return fullResponse(await route.invoke(api, { rpcId: message.rpcId, payload: payload.data }, signal))
+    return fullResponse(await route.invoke(api, attachContext({ rpcId: message.rpcId, payload: payload.data }, context), signal))
   } catch (error: unknown) {
     // The impl never throws business errors; reaching here means the implementation itself crashed — 500, carrier layer.
     return new Response(`handler failure: ${String(error)}`, { status: 500 })
@@ -240,7 +257,10 @@ function sseResponse(frames: AsyncIterable<RpcRequest<MuxFrame | HostFrame>>): R
  * @param api - the host-side ApiProxy implementation.
  * @returns an object holding `fetch(Request)`; paths outside /api/ return 404.
  */
-export function toFetchHandler(api: ApiProxy): { fetch: typeof fetch } {
+export function toFetchHandler(api: ApiProxy, options: ApiFetchHandlerOptions = {}): { fetch: typeof fetch } {
+  const resolveContext = options.resolveContext
+  const requestContext = (request: Request): Promise<ApiRequestContext | undefined> =>
+    Promise.resolve(resolveContext?.(request))
   return {
     // Signature matches global fetch: the isomorphic point hands this function to InProcessApiClient as its transport aspect,
     // Clients call in (url, init) form — normalize to Request before handling.
@@ -252,10 +272,12 @@ export function toFetchHandler(api: ApiProxy): { fetch: typeof fetch } {
       // No-envelope read channels (SSE GET streams + host-only download):
       // physical routes that answer directly, without a wire envelope.
       if (path === '/api/events.mux' && req.method === 'GET') {
-        return sseResponse(api.events.mux({ rpcId: RpcId(randomUUID()), payload: {} }, req.signal))
+        const context = await requestContext(req)
+        return sseResponse(api.events.mux(attachContext({ rpcId: RpcId(randomUUID()), payload: {} }, context), req.signal))
       }
       if (path === '/api/events.host' && req.method === 'GET') {
-        return sseResponse(api.events.host({ rpcId: RpcId(randomUUID()), payload: {} }, req.signal))
+        const context = await requestContext(req)
+        return sseResponse(api.events.host(attachContext({ rpcId: RpcId(randomUUID()), payload: {} }, context), req.signal))
       }
       if (path === '/api/session.export' && (req.method === 'GET' || req.method === 'HEAD')) {
         // Query params are a different boundary from the POST envelope, but
@@ -264,7 +286,8 @@ export function toFetchHandler(api: ApiProxy): { fetch: typeof fetch } {
         if (!parsed.success) {
           return new Response('missing or invalid sessionId query parameter', { status: 400 })
         }
-        const response = await api.downloads.sessionLog(parsed.data, req.signal)
+        const context = await requestContext(req)
+        const response = await api.downloads.sessionLog({ ...parsed.data, ...context === undefined ? {} : { context } }, req.signal)
         if (req.method === 'GET') return response
         await response.body?.cancel()
         return new Response(null, { status: response.status, headers: response.headers })
@@ -296,7 +319,7 @@ export function toFetchHandler(api: ApiProxy): { fetch: typeof fetch } {
       if (path === '/api/respond') {
         const parsed = clientResponseSchema.safeParse(body)
         if (!parsed.success) return Response.json({ accepted: false, reason: 'bad-response' })
-        return Response.json(await api.respond(parsed.data))
+        return Response.json(await api.respond(parsed.data, await requestContext(req)))
       }
 
       const method = methodFor(path.slice('/api/'.length))
@@ -314,7 +337,7 @@ export function toFetchHandler(api: ApiProxy): { fetch: typeof fetch } {
       if (message.method !== method) {
         return errorResponse(message.rpcId, { code: 'bad-request', message: `method "${message.method}" does not match path "${method}"`, details: { issues: [] } })
       }
-      return handleUnary(api, method, message, req.signal)
+      return handleUnary(api, method, message, req.signal, await requestContext(req))
     },
   }
 }
